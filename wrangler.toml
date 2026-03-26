@@ -1,0 +1,12 @@
+name = "echo-website-publisher"
+main = "src/index.ts"
+compatibility_date = "2024-09-23"
+
+[[r2_buckets]]
+binding = "SITES"
+bucket_name = "echo-published-sites"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "echo-website-publisher"
+database_id = "5763028b-45f9-40df-93e3-3a2264db90d7"
