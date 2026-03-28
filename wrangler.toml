@@ -1,6 +1,6 @@
 name = "echo-website-publisher"
 main = "src/index.ts"
-compatibility_date = "2024-09-23"
+compatibility_date = "2024-12-01"
 
 [[r2_buckets]]
 binding = "SITES"
