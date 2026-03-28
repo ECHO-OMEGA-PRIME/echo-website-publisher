@@ -10,3 +10,7 @@ bucket_name = "echo-published-sites"
 binding = "DB"
 database_name = "echo-website-publisher"
 database_id = "5763028b-45f9-40df-93e3-3a2264db90d7"
+
+[[analytics_engine_datasets]]
+binding = "ANALYTICS"
+dataset = "echo_metrics"
