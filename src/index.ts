@@ -36,6 +36,8 @@ app.use('*', cors({
 // Health
 // ---------------------------------------------------------------------------
 
+app.get('/', (c) => c.json({ service: 'echo-website-publisher', status: 'operational' }));
+
 app.get('/health', (c) => {
   return c.json({
     status: 'ok',
