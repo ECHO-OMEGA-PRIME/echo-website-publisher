@@ -20,18 +20,55 @@ interface PublishRequest {
 }
 
 // ---------------------------------------------------------------------------
+// Structured logging
+// ---------------------------------------------------------------------------
+
+function slog(level: 'info' | 'warn' | 'error', msg: string, data?: Record<string, unknown>) {
+  const entry = { ts: new Date().toISOString(), level, worker: 'echo-website-publisher', version: '1.2.0', msg, ...data };
+  if (level === 'error') console.error(JSON.stringify(entry));
+  else console.log(JSON.stringify(entry));
+}
+
+// ---------------------------------------------------------------------------
 // App
 // ---------------------------------------------------------------------------
 
 const app = new Hono<{ Bindings: Env }>();
 
+// Security headers
+app.use('*', async (c, next) => {
+  await next();
+  c.header('X-Content-Type-Options', 'nosniff');
+  c.header('X-Frame-Options', 'SAMEORIGIN');
+  c.header('X-XSS-Protection', '1; mode=block');
+  c.header('Referrer-Policy', 'strict-origin-when-cross-origin');
+  c.header('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+});
+
 // CORS — allow echo-ept.com and localhost
 app.use('*', cors({
   origin: ['https://echo-ept.com', 'https://www.echo-ept.com', 'http://localhost:3000', 'http://localhost:3001'],
-  allowMethods: ['GET', 'POST', 'OPTIONS'],
-  allowHeaders: ['Content-Type'],
+  allowMethods: ['GET', 'POST', 'DELETE', 'OPTIONS'],
+  allowHeaders: ['Content-Type', 'X-Echo-API-Key', 'Authorization'],
   maxAge: 86400,
 }));
+
+// Rate limiting (in-memory per isolate — lightweight)
+const rateLimits = new Map<string, { count: number; resetAt: number }>();
+app.use('*', async (c, next) => {
+  if (c.req.path === '/health' || c.req.path === '/' || c.req.method === 'OPTIONS') return next();
+  const ip = c.req.header('CF-Connecting-IP') || 'unknown';
+  const now = Date.now();
+  const key = `${ip}:${c.req.method === 'GET' ? 'r' : 'w'}`;
+  const limit = c.req.method === 'GET' ? 120 : 30;
+  let entry = rateLimits.get(key);
+  if (!entry || now > entry.resetAt) { entry = { count: 0, resetAt: now + 60000 }; rateLimits.set(key, entry); }
+  entry.count++;
+  if (entry.count > limit) { slog('warn', 'Rate limited', { ip }); return c.json({ error: 'Rate limited' }, 429); }
+  // Prune old entries periodically
+  if (rateLimits.size > 10000) { for (const [k, v] of rateLimits) { if (now > v.resetAt) rateLimits.delete(k); } }
+  return next();
+});
 
 // ---------------------------------------------------------------------------
 // Auth middleware for write operations
@@ -46,13 +83,14 @@ function authOk(c: any): boolean {
 // Health
 // ---------------------------------------------------------------------------
 
-app.get('/', (c) => c.json({ service: 'echo-website-publisher', status: 'operational', version: '1.1.0' }));
+app.get('/', (c) => c.json({ service: 'echo-website-publisher', status: 'operational', version: '1.2.0' }));
 
 app.get('/health', (c) => {
   return c.json({
     status: 'ok',
     service: 'echo-website-publisher',
-    version: '1.1.0',
+    version: '1.2.0',
+    timestamp: new Date().toISOString(),
   });
 });
 
@@ -67,9 +105,17 @@ app.post('/publish', async (c) => {
   if (!body.siteId || !body.pages || body.pages.length === 0) {
     return c.json({ error: 'siteId and pages are required' }, 400);
   }
+  if (body.pages.length > 200) {
+    return c.json({ error: 'Max 200 pages per publish' }, 400);
+  }
+  const totalSize = body.pages.reduce((s, p) => s + (p.html?.length || 0), 0);
+  if (totalSize > 50 * 1024 * 1024) {
+    return c.json({ error: 'Total content exceeds 50MB limit' }, 400);
+  }
 
   const env: Env = c.env;
   const siteId = body.siteId.replace(/[^a-zA-Z0-9_-]/g, '');
+  slog('info', 'Publishing site', { siteId, pages: body.pages.length, totalSize });
 
   // Store each page in R2 under sites/{siteId}/{path}
   for (const page of body.pages) {
@@ -110,6 +156,7 @@ app.post('/publish', async (c) => {
 
   const siteUrl = `https://echo-website-publisher.bmcii1976.workers.dev/site/${siteId}`;
 
+  slog('info', 'Site published', { siteId, url: siteUrl, pages: body.pages.length });
   return c.json({
     success: true,
     url: siteUrl,
@@ -223,6 +270,7 @@ app.delete('/site/:siteId', async (c) => {
     // Non-fatal
   }
 
+  slog('info', 'Site deleted', { siteId });
   return c.json({ success: true, deleted: siteId });
 });
 
@@ -248,7 +296,7 @@ app.onError((err, c) => {
   if (err.message?.includes('JSON')) {
     return c.json({ error: 'Invalid JSON body' }, 400);
   }
-  console.error(`[echo-website-publisher] ${err.message}`);
+  slog('error', 'Unhandled error', { error: err.message, path: c.req.path });
   return c.json({ error: 'Internal server error' }, 500);
 });
 
