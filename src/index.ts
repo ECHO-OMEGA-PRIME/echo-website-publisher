@@ -8,6 +8,7 @@ import { cors } from 'hono/cors';
 interface Env {
   SITES: R2Bucket;
   DB: D1Database;
+  ECHO_API_KEY: string;
 }
 
 interface PublishRequest {
@@ -33,24 +34,34 @@ app.use('*', cors({
 }));
 
 // ---------------------------------------------------------------------------
+// Auth middleware for write operations
+// ---------------------------------------------------------------------------
+
+function authOk(c: any): boolean {
+  const key = c.req.header('X-Echo-API-Key') || c.req.header('Authorization')?.replace('Bearer ', '');
+  return key === c.env.ECHO_API_KEY;
+}
+
+// ---------------------------------------------------------------------------
 // Health
 // ---------------------------------------------------------------------------
 
-app.get('/', (c) => c.json({ service: 'echo-website-publisher', status: 'operational' }));
+app.get('/', (c) => c.json({ service: 'echo-website-publisher', status: 'operational', version: '1.1.0' }));
 
 app.get('/health', (c) => {
   return c.json({
     status: 'ok',
     service: 'echo-website-publisher',
-    version: '1.0.0',
+    version: '1.1.0',
   });
 });
 
 // ---------------------------------------------------------------------------
-// POST /publish — store site pages in R2, return live URL
+// POST /publish — store site pages in R2, return live URL (AUTH REQUIRED)
 // ---------------------------------------------------------------------------
 
 app.post('/publish', async (c) => {
+  if (!authOk(c)) return c.json({ error: 'Unauthorized' }, 401);
   const body = await c.req.json<PublishRequest>();
 
   if (!body.siteId || !body.pages || body.pages.length === 0) {
@@ -195,6 +206,7 @@ app.get('/sites', async (c) => {
 // ---------------------------------------------------------------------------
 
 app.delete('/site/:siteId', async (c) => {
+  if (!authOk(c)) return c.json({ error: 'Unauthorized' }, 401);
   const siteId = c.req.param('siteId').replace(/[^a-zA-Z0-9_-]/g, '');
   const env: Env = c.env;
 
