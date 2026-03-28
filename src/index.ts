@@ -229,4 +229,17 @@ app.all('*', (c) => {
   }, 404);
 });
 
+
+app.onError((err, c) => {
+  if (err.message?.includes('JSON')) {
+    return c.json({ error: 'Invalid JSON body' }, 400);
+  }
+  console.error(`[echo-website-publisher] ${err.message}`);
+  return c.json({ error: 'Internal server error' }, 500);
+});
+
+app.notFound((c) => {
+  return c.json({ error: 'Not found' }, 404);
+});
+
 export default app;
